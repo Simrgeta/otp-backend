@@ -1,0 +1,9 @@
+{
+  "name": "otp-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "google-auth-library": "^9.0.0",
+    "node-fetch": "^3.3.2"
+  }
+}
