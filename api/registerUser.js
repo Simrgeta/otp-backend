@@ -7,7 +7,7 @@ const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes window
 const MAX_REQUESTS_PER_WINDOW = 5;
 
 const HMAC_SECRET = process.env.HMAC_SECRET;
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
+const FIREBASE_PROJECT_ID = process.env.YOUR_PROJECT_ID;
 const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
 
 function verifyHmac(deviceId, timestamp, signature) {
@@ -86,7 +86,7 @@ export default async function handler(req, res) {
 
   // Authenticate with Google API to get access token for Firestore REST calls
   const auth = new GoogleAuth({
-    credentials: JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT),
+    credentials: JSON.parse(processFIREBASE_CREDS),
     scopes: ['https://www.googleapis.com/auth/datastore']
   });
 
