@@ -1,5 +1,6 @@
 import { GoogleAuth } from 'google-auth-library';
 import fetch from 'node-fetch';
+import crypto from 'crypto';
 
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes window
@@ -10,7 +11,6 @@ const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
 
 function verifyHmac(deviceId, timestamp, signature) {
-  const crypto = require('crypto');
   const data = deviceId + ":" + timestamp;
   const hmac = crypto.createHmac("sha256", HMAC_SECRET);
   hmac.update(data);
