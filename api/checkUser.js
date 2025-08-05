@@ -1,5 +1,3 @@
-// File: /api/registerUser.js
-
 import { GoogleAuth } from 'google-auth-library';
 import fetch from 'node-fetch';
 
