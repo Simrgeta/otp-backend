@@ -86,7 +86,7 @@ export default async function handler(req, res) {
 
   // Authenticate with Google API to get access token for Firestore REST calls
   const auth = new GoogleAuth({
-    credentials: JSON.parse(processFIREBASE_CREDS),
+    credentials: JSON.parse(process.env.FIREBASE_CREDS),
     scopes: ['https://www.googleapis.com/auth/datastore']
   });
 
