@@ -2,7 +2,7 @@ import { GoogleAuth } from 'google-auth-library';
 import fetch from 'node-fetch';
 
 const rateLimitMap = new Map();
-const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes window for rate limit and replay prevention
+const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes window
 const MAX_REQUESTS_PER_WINDOW = 5;
 
 const HMAC_SECRET = process.env.HMAC_SECRET;
@@ -18,7 +18,6 @@ function verifyHmac(deviceId, timestamp, signature) {
   return digest === signature;
 }
 
-// Clean up expired rate limits
 const cleanRateLimits = () => {
   const now = Date.now();
   for (const [key, value] of rateLimitMap.entries()) {
@@ -49,7 +48,7 @@ export default async function handler(req, res) {
   }
 
   const uid = verifyData.users[0].localId;
-  const email = verifyData.users[0].email;
+  const emailFromToken = verifyData.users[0].email;
 
   cleanRateLimits();
   const now = Date.now();
@@ -63,19 +62,24 @@ export default async function handler(req, res) {
     rateLimitMap.set(uid, { count: 1, startTime: now });
   }
 
-  // Extract data from body
-  const { profileUri, deviceId, timestamp, signature } = req.body;
+  // Extract data from request body
+  const { email, uid: uidFromClient, profileUri, deviceId, timestamp, signature } = req.body;
 
-  if (!email || !deviceId || !timestamp || !signature || !profileUri) {
+  if (!email || !uidFromClient || !deviceId || !timestamp || !signature || !profileUri) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  // Replay protection: reject if timestamp too old or in future
+  // Ensure uid from client matches token's uid for security
+  if (uidFromClient !== uid) {
+    return res.status(403).json({ error: 'UID mismatch' });
+  }
+
+  // Replay protection
   if (Math.abs(now - timestamp) > RATE_LIMIT_WINDOW_MS) {
     return res.status(400).json({ error: 'Timestamp invalid or expired' });
   }
 
-  // Verify signature
+  // Verify HMAC signature
   if (!verifyHmac(deviceId, timestamp, signature)) {
     return res.status(403).json({ error: 'Invalid signature' });
   }
@@ -95,43 +99,30 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Fetch TempUser data from Firestore REST API
+    // Fetch TempUser data from Firestore
     const tempUserUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/TempUser/${encodeURIComponent(email)}`;
-
-    const tempUserResp = await fetch(tempUserUrl, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-
+    const tempUserResp = await fetch(tempUserUrl, { headers: { Authorization: `Bearer ${token}` } });
     if (!tempUserResp.ok) {
       return res.status(404).json({ error: 'TempUser not found' });
     }
-
     const tempUserDoc = await tempUserResp.json();
-
     if (!tempUserDoc.fields) {
       return res.status(404).json({ error: 'Invalid TempUser document' });
     }
 
-    // Prepare data for User collection (Firestore REST format)
+    // Prepare User document fields
     const userData = { ...tempUserDoc.fields };
-
-    // Add/update secure fields
     userData.Profile = { stringValue: profileUri };
     userData.deviceId = { stringValue: deviceId };
     userData.signature = { stringValue: signature };
     userData.numberOfDevices = { integerValue: "1" };
 
-    // Create User document with UID as doc ID
+    // Write User doc with UID as document ID
     const userDocUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/User/${uid}`;
 
     const writeResp = await fetch(userDocUrl, {
-      method: 'PATCH', // PATCH or PUT works, PATCH merges fields
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields: userData })
     });
 
@@ -141,12 +132,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Failed to write User document' });
     }
 
-    // Delete TempUser document
+    // Delete TempUser doc
     const deleteResp = await fetch(tempUserUrl, {
       method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
+      headers: { Authorization: `Bearer ${token}` }
     });
 
     if (!deleteResp.ok) {
