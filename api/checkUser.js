@@ -9,7 +9,6 @@ const MAX_REQUESTS_PER_WINDOW = 5;
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end('Method Not Allowed');
 
-  // ✅ Extract and verify ID token (works for anonymous users too)
   const authHeader = req.headers.authorization || '';
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
@@ -103,20 +102,13 @@ export default async function handler(req, res) {
     return res.status(200).json({ allow: true });
   }
 
-  // ✅ User exists → check devices
+  // ✅ User exists → check deviceId and signature directly (flat fields)
   const fields = queryResult[0].document.fields || {};
   const numberOfDevices = parseInt(fields.numberOfDevices?.integerValue || '0', 10);
-  const devices = fields.devices?.arrayValue?.values || [];
+  const existingDeviceId = fields.deviceId?.stringValue;
+  const existingSignature = fields.signature?.stringValue;
 
-  const deviceAlreadyExists = devices.some((d) => {
-    const dev = d.mapValue.fields;
-    return (
-      dev.deviceId?.stringValue === deviceId ||
-      dev.signature?.stringValue === signature
-    );
-  });
-
-  if (deviceAlreadyExists) {
+  if (existingDeviceId === deviceId || existingSignature === signature) {
     return res.status(200).json({ allow: false, message: 'Device already registered for this user' });
   }
 
