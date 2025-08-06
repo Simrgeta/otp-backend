@@ -25,7 +25,6 @@ export default async function handler(req, res) {
   console.log('🔐 idToken:', idToken);
   console.log('📉 Firebase response:', verifyData);
 
-  
   if (!verifyData.users || !verifyData.users[0]) {
     return res.status(401).json({ allow: false, message: 'Invalid token' });
   }
@@ -73,25 +72,39 @@ export default async function handler(req, res) {
   const client = await auth.getClient();
   const token = await client.getAccessToken();
 
-  const firestoreURL = `https://firestore.googleapis.com/v1/projects/${process.env.YOUR_PROJECT_ID}/databases/(default)/documents/User/${encodeURIComponent(email)}`;
+  // 🔍 Query by email in User collection (not document ID)
+  const queryURL = `https://firestore.googleapis.com/v1/projects/${process.env.YOUR_PROJECT_ID}/databases/(default)/documents:runQuery`;
 
-  const firestoreResp = await fetch(firestoreURL, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${token.token}`
+  const queryBody = {
+    structuredQuery: {
+      from: [{ collectionId: 'User' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'email' },
+          op: 'EQUAL',
+          value: { stringValue: email }
+        }
+      },
+      limit: 1
     }
+  };
+
+  const firestoreResp = await fetch(queryURL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(queryBody)
   });
 
-  if (firestoreResp.status === 404) {
-    return res.status(200).json({ allow: true });
+  const queryResult = await firestoreResp.json();
+
+  if (!Array.isArray(queryResult) || !queryResult[0]?.document) {
+    return res.status(200).json({ allow: true }); // ✅ No user found → allow registration
   }
 
-  if (!firestoreResp.ok) {
-    return res.status(500).json({ allow: false, message: 'Firestore fetch failed' });
-  }
-
-  const doc = await firestoreResp.json();
-  const fields = doc.fields || {};
+  const fields = queryResult[0].document.fields || {};
 
   const numberOfDevices = parseInt(fields.numberOfDevices?.integerValue || '0', 10);
   const devices = fields.devices?.arrayValue?.values || [];
