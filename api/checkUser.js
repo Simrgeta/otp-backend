@@ -68,7 +68,7 @@ export default async function handler(req, res) {
       from: [{ collectionId: 'User' }],
       where: {
         fieldFilter: {
-          field: { fieldPath: 'email' },
+          field: { fieldPath: 'Email' },
           op: 'EQUAL',
           value: { stringValue: email },
         },
