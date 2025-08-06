@@ -9,6 +9,7 @@ const MAX_REQUESTS_PER_WINDOW = 5;
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end('Method Not Allowed');
 
+  // ✅ Extract and verify ID token (works for anonymous users too)
   const authHeader = req.headers.authorization || '';
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
@@ -21,17 +22,13 @@ export default async function handler(req, res) {
   });
 
   const verifyData = await verifyResp.json();
-
-  console.log('🔐 idToken:', idToken);
-  console.log('📉 Firebase response:', verifyData);
-
   if (!verifyData.users || !verifyData.users[0]) {
     return res.status(401).json({ allow: false, message: 'Invalid token' });
   }
 
   const uid = verifyData.users[0].localId;
 
-  // Rate limiting
+  // ✅ Rate limiting
   const now = Date.now();
   for (const [key, value] of rateLimitMap.entries()) {
     if (now - value.startTime > RATE_LIMIT_WINDOW_MS) {
@@ -49,12 +46,13 @@ export default async function handler(req, res) {
     rateLimitMap.set(uid, { count: 1, startTime: now });
   }
 
+  // ✅ Extract body
   const { email, deviceId, signature } = req.body;
   if (!email || !deviceId || !signature) {
     return res.status(400).json({ allow: false, message: 'Missing required fields' });
   }
 
-  // ✅ Verify signature using HMAC(deviceId)
+  // ✅ Verify HMAC Signature
   const hmac = crypto.createHmac('sha256', process.env.HMAC_SECRET);
   hmac.update(deviceId);
   const expectedSignature = hmac.digest('hex');
@@ -63,7 +61,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ allow: false, message: 'Invalid signature' });
   }
 
-  // ✅ Authenticate to Firestore
+  // ✅ Authenticate with Firestore
   const auth = new GoogleAuth({
     credentials: JSON.parse(process.env.FIREBASE_CREDS),
     scopes: ['https://www.googleapis.com/auth/datastore']
@@ -72,7 +70,7 @@ export default async function handler(req, res) {
   const client = await auth.getClient();
   const token = await client.getAccessToken();
 
-  // 🔍 Query by email in User collection (not document ID)
+  // ✅ Query the User collection by email field
   const queryURL = `https://firestore.googleapis.com/v1/projects/${process.env.YOUR_PROJECT_ID}/databases/(default)/documents:runQuery`;
 
   const queryBody = {
@@ -100,12 +98,13 @@ export default async function handler(req, res) {
 
   const queryResult = await firestoreResp.json();
 
+  // ✅ No user exists → allow registration
   if (!Array.isArray(queryResult) || !queryResult[0]?.document) {
-    return res.status(200).json({ allow: true }); // ✅ No user found → allow registration
+    return res.status(200).json({ allow: true });
   }
 
+  // ✅ User exists → check devices
   const fields = queryResult[0].document.fields || {};
-
   const numberOfDevices = parseInt(fields.numberOfDevices?.integerValue || '0', 10);
   const devices = fields.devices?.arrayValue?.values || [];
 
