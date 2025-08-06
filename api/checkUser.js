@@ -1,6 +1,5 @@
 import { GoogleAuth } from 'google-auth-library';
 import fetch from 'node-fetch';
-import crypto from 'crypto';
 
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -13,6 +12,7 @@ export default async function handler(req, res) {
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!idToken) return res.status(401).json({ allow: false, message: 'Missing token' });
 
+  // ✅ Verify Firebase ID token
   const verifyResp = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${process.env.FIREBASE_WEB_API_KEY}`,
     {
@@ -28,7 +28,7 @@ export default async function handler(req, res) {
 
   const uid = verifyData.users[0].localId;
 
-  // Rate limiting
+  // ✅ Basic rate limiting per user
   const now = Date.now();
   for (const [key, info] of rateLimitMap.entries()) {
     if (now - info.startTime > RATE_LIMIT_WINDOW_MS) rateLimitMap.delete(key);
@@ -43,18 +43,13 @@ export default async function handler(req, res) {
     rateLimitMap.set(uid, { count: 1, startTime: now });
   }
 
-  const { email, deviceId, signature } = req.body;
-  if (!email || !deviceId || !signature) {
-    return res.status(400).json({ allow: false, message: 'Missing required fields' });
+  // ✅ Required: email only
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ allow: false, message: 'Missing email field' });
   }
 
-  const hmac = crypto.createHmac('sha256', process.env.HMAC_SECRET);
-  hmac.update(deviceId);
-  const expectedSignature = hmac.digest('hex');
-  if (signature !== expectedSignature) {
-    return res.status(401).json({ allow: false, message: 'Invalid signature' });
-  }
-
+  // ✅ Set up Firestore client
   const auth = new GoogleAuth({
     credentials: JSON.parse(process.env.FIREBASE_CREDS),
     scopes: ['https://www.googleapis.com/auth/datastore'],
@@ -77,6 +72,7 @@ export default async function handler(req, res) {
     },
   };
 
+  // ✅ Query Firestore for the email
   const firestoreResp = await fetch(queryURL, {
     method: 'POST',
     headers: {
@@ -87,23 +83,11 @@ export default async function handler(req, res) {
   });
 
   const queryResult = await firestoreResp.json();
+
+  // ✅ Decision based on existence
   if (!Array.isArray(queryResult) || !queryResult[0]?.document) {
-    return res.status(200).json({ allow: true }); // no existing user
+    return res.status(200).json({ allow: true }); // Email does not exist, allow
   }
 
-  const fields = queryResult[0].document.fields || {};
-  const numberOfDevices = parseInt(fields.numberOfDevices?.integerValue || '0', 10);
-  const existingDeviceId = fields.deviceId?.stringValue;
-  const existingSignature = fields.signature?.stringValue;
-
-  // Block if same device or signature
-  if (existingDeviceId === deviceId && existingSignature === signature) {
-    return res.status(200).json({ allow: false, message: 'Device already registered for this user' });
-  }
-
-  if (numberOfDevices >= 1) {
-    return res.status(200).json({ allow: false, message: 'Device limit reached for this account' });
-  }
-
-  return res.status(200).json({ allow: true });
+  return res.status(200).json({ allow: false, message: 'Email already registered' });
 }
