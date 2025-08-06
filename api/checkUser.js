@@ -97,7 +97,7 @@ export default async function handler(req, res) {
   const existingSignature = fields.signature?.stringValue;
 
   // Block if same device or signature
-  if (existingDeviceId === deviceId || existingSignature === signature) {
+  if (existingDeviceId === deviceId && existingSignature === signature) {
     return res.status(200).json({ allow: false, message: 'Device already registered for this user' });
   }
 
