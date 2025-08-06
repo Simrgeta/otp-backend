@@ -10,11 +10,11 @@ const HMAC_SECRET = process.env.HMAC_SECRET;
 const FIREBASE_PROJECT_ID = process.env.YOUR_PROJECT_ID;
 const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
 
-function verifyHmac(deviceId, timestamp, signature) {
-  const data = deviceId + ":" + timestamp;
+function verifyHmac(deviceId, signature) {
+  const data = deviceId;
   const hmac = crypto.createHmac("sha256", HMAC_SECRET);
   hmac.update(data);
-  const digest = hmac.digest("base64");
+  const digest = hmac.digest("hex");
   return digest === signature;
 }
 
