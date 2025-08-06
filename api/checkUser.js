@@ -89,5 +89,5 @@ export default async function handler(req, res) {
     return res.status(200).json({ allow: true }); // Email does not exist, allow
   }
 
-  return res.status(200).json({ allow: false, message: 'Email already registered' });
+  return res.status(200).json({ allow: false, message: 'User with the same email exists!' });
 }
