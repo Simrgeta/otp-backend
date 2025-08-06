@@ -80,7 +80,7 @@ export default async function handler(req, res) {
   }
 
   // Verify HMAC signature
-  if (!verifyHmac(deviceId, timestamp, signature)) {
+  if (!verifyHmac(deviceId, signature)) {
     return res.status(403).json({ error: 'Invalid signature' });
   }
 
