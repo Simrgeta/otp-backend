@@ -21,6 +21,11 @@ export default async function handler(req, res) {
   });
 
   const verifyData = await verifyResp.json();
+
+  console.log('🔐 idToken:', idToken);
+  console.log('📉 Firebase response:', verifyData);
+
+  
   if (!verifyData.users || !verifyData.users[0]) {
     return res.status(401).json({ allow: false, message: 'Invalid token' });
   }
