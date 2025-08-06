@@ -1,5 +1,6 @@
 import { GoogleAuth } from 'google-auth-library';
 import fetch from 'node-fetch';
+import crypto from 'crypto';
 
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -28,14 +29,12 @@ export default async function handler(req, res) {
 
   // Rate limiting
   const now = Date.now();
-  const cleanRateLimits = () => {
-    for (const [key, value] of rateLimitMap.entries()) {
-      if (now - value.startTime > RATE_LIMIT_WINDOW_MS) {
-        rateLimitMap.delete(key);
-      }
+  for (const [key, value] of rateLimitMap.entries()) {
+    if (now - value.startTime > RATE_LIMIT_WINDOW_MS) {
+      rateLimitMap.delete(key);
     }
-  };
-  cleanRateLimits();
+  }
+
   const userLimit = rateLimitMap.get(uid);
   if (userLimit && now - userLimit.startTime < RATE_LIMIT_WINDOW_MS) {
     if (userLimit.count >= MAX_REQUESTS_PER_WINDOW) {
@@ -51,7 +50,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ allow: false, message: 'Missing required fields' });
   }
 
-  // Authenticate to Firestore
+  // ✅ Verify signature using HMAC(deviceId)
+  const hmac = crypto.createHmac('sha256', process.env.HMAC_SECRET);
+  hmac.update(deviceId);
+  const expectedSignature = hmac.digest('hex');
+
+  if (signature !== expectedSignature) {
+    return res.status(401).json({ allow: false, message: 'Invalid signature' });
+  }
+
+  // ✅ Authenticate to Firestore
   const auth = new GoogleAuth({
     credentials: JSON.parse(process.env.FIREBASE_CREDS),
     scopes: ['https://www.googleapis.com/auth/datastore']
