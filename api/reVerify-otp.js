@@ -1,47 +1,106 @@
 import { GoogleAuth } from 'google-auth-library';
 import fetch from 'node-fetch';
+import crypto from 'crypto';
+
+const HMAC_SECRET = process.env.HMAC_SECRET;
+const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
+const FIREBASE_PROJECT_ID = process.env.YOUR_PROJECT_ID;
+
+const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_REQUESTS_PER_WINDOW = 5;
+const rateLimitMap = new Map();
+
+function verifyHmac(deviceId, timestamp, signature) {
+  const payload = `${deviceId}:${timestamp}`;
+  const hmac = crypto.createHmac('sha256', HMAC_SECRET);
+  hmac.update(payload);
+  const digest = hmac.digest('hex');
+  return digest === signature;
+}
+
+function cleanRateLimits() {
+  const now = Date.now();
+  for (const [key, value] of rateLimitMap.entries()) {
+    if (now - value.startTime > RATE_LIMIT_WINDOW_MS) {
+      rateLimitMap.delete(key);
+    }
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end('Method Not Allowed');
 
   const authHeader = req.headers.authorization || '';
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
   if (!idToken) return res.status(401).json({ error: 'Missing token' });
 
-  // 🔐 Verify Firebase ID Token
-  const verifyResp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${process.env.FIREBASE_WEB_API_KEY}`, {
+  // Verify Firebase ID token
+  const verifyResp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${FIREBASE_WEB_API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idToken })
+    body: JSON.stringify({ idToken }),
   });
 
   const verifyData = await verifyResp.json();
-  if (!verifyData.users || !verifyData.users[0]) {
-    return res.status(401).json({ error: 'Invalid token' });
+  const firebaseUser = verifyData.users?.[0];
+
+  if (!firebaseUser) {
+    return res.status(401).json({ error: 'Invalid Firebase ID token' });
   }
 
-  // 📥 Extract data from request
-  const { email, enteredOtp } = req.body || {};
-  if (!email || !enteredOtp) {
-    return res.status(400).json({ error: 'Missing email or OTP' });
+  const uid = firebaseUser.localId;
+  const emailFromToken = firebaseUser.email;
+
+  // Extract request fields
+  const { email, enteredOtp, deviceId, signature, timestamp } = req.body || {};
+  if (!email || !enteredOtp || !deviceId || !signature || !timestamp) {
+    return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  // 🔐 Setup Firestore access
+  // Verify email matches token
+  if (email !== emailFromToken) {
+    return res.status(403).json({ error: 'Email mismatch' });
+  }
+
+  // Replay protection
+  const now = Date.now();
+  if (Math.abs(now - timestamp) > RATE_LIMIT_WINDOW_MS) {
+    return res.status(400).json({ error: 'Timestamp expired or too far in the future' });
+  }
+
+  // HMAC verification
+  if (!verifyHmac(deviceId, timestamp, signature)) {
+    return res.status(403).json({ error: 'Invalid signature' });
+  }
+
+  // Rate limiting
+  cleanRateLimits();
+  const userRate = rateLimitMap.get(uid);
+  if (userRate && now - userRate.startTime < RATE_LIMIT_WINDOW_MS) {
+    if (userRate.count >= MAX_REQUESTS_PER_WINDOW) {
+      return res.status(429).json({ error: 'Rate limit exceeded' });
+    }
+    userRate.count++;
+  } else {
+    rateLimitMap.set(uid, { count: 1, startTime: now });
+  }
+
+  // Get access token for Firestore
   const auth = new GoogleAuth({
     credentials: JSON.parse(process.env.FIREBASE_CREDS),
-    scopes: ['https://www.googleapis.com/auth/datastore']
+    scopes: ['https://www.googleapis.com/auth/datastore'],
   });
 
   const client = await auth.getClient();
-  const token = await client.getAccessToken();
+  const tokenResponse = await client.getAccessToken();
+  const firestoreToken = tokenResponse.token;
 
-  // 🔍 Step 1: Query document from User collection by Email
-  const queryRes = await fetch(`https://firestore.googleapis.com/v1/projects/abebe-15ab9/databases/(default)/documents:runQuery`, {
+  // Query User by email
+  const queryRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${token.token}`,
-      'Content-Type': 'application/json'
+      Authorization: `Bearer ${firestoreToken}`,
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       structuredQuery: {
@@ -50,27 +109,43 @@ export default async function handler(req, res) {
           fieldFilter: {
             field: { fieldPath: 'Email' },
             op: 'EQUAL',
-            value: { stringValue: email }
-          }
+            value: { stringValue: email },
+          },
         },
-        limit: 1
-      }
-    })
+        limit: 1,
+      },
+    }),
   });
 
   const queryJson = await queryRes.json();
+  const document = queryJson[0]?.document;
 
-  if (!queryJson[0] || !queryJson[0].document) {
-    return res.status(404).json({ error: 'User not found with that email' });
+  if (!document) {
+    return res.status(404).json({ error: 'User not found' });
   }
 
-  const doc = queryJson[0].document;
-  const storedOtp = doc.fields?.Code?.stringValue;
+  const storedOtp = document.fields?.Code?.stringValue;
+  const docName = document.name;
 
-  // ✅ Compare OTP
-  if (enteredOtp === storedOtp) {
-    return res.status(200).json({ success: true, message: 'OTP verified' });
+  // Validate OTP
+  if (enteredOtp !== storedOtp) {
+    return res.status(403).json({ error: 'Incorrect OTP' });
   }
 
-  return res.status(403).json({ success: false, error: 'Incorrect OTP' });
+  // Update DeviceId and Signature
+  await fetch(`https://firestore.googleapis.com/v1/${docName}?updateMask.fieldPaths=DeviceId&updateMask.fieldPaths=Signature`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${firestoreToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fields: {
+        DeviceId: { stringValue: deviceId },
+        Signature: { stringValue: signature },
+      },
+    }),
+  });
+
+  return res.status(200).json({ success: true, message: 'OTP verified and device info updated' });
 }
