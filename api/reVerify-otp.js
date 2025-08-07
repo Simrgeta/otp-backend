@@ -127,7 +127,7 @@ export default async function handler(req, res) {
   }
 
   // 📦 Update deviceId and signature in Firestore
-  await fetch(`https://firestore.googleapis.com/v1/${docName}?updateMask.fieldPaths=DeviceId&updateMask.fieldPaths=Signature`, {
+  await fetch(`https://firestore.googleapis.com/v1/${docName}?updateMask.fieldPaths=deviceId&updateMask.fieldPaths=Signature`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${firestoreToken}`,
@@ -135,7 +135,7 @@ export default async function handler(req, res) {
     },
     body: JSON.stringify({
       fields: {
-        DeviceId: { stringValue: deviceId },
+        deviceId: { stringValue: deviceId },
         Signature: { stringValue: signature },
       },
     }),
