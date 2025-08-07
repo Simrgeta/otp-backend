@@ -48,23 +48,14 @@ export default async function handler(req, res) {
   }
 
   const uid = firebaseUser.localId;
-  const emailFromToken = firebaseUser.email;
 
   // 📥 Extract request fields
   const { email, enteredOtp, deviceId, signature, timestamp } = req.body || {};
-  console.log("Token email:", emailFromToken);
-  console.log("Request email:", email);
-  console.log("DeviceId:", deviceId);
-  console.log("Signature valid:", verifyHmac(deviceId, signature));
-  console.log("Signature received:", signature);
+  
   if (!email || !enteredOtp || !deviceId || !signature || !timestamp) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  // 🛡️ Email mismatch check
-  if (email !== emailFromToken) {
-    return res.status(403).json({ error: 'Email mismatch' });
-  }
 
   // 🕓 Timestamp replay protection (rate-limit related)
   const now = Date.now();
