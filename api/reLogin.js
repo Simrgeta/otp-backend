@@ -113,9 +113,34 @@ export default async function handler(req, res) {
       to: [{ email, name: username }],
       subject: 'Your OTP Code',
       htmlContent: `
-        <p>Hello <b>${username}</b>,</p>
-        <p>Your OTP is: <h2>${otp}</h2></p>
-        <p>It expires in 5 minutes.</p>
+        <html>
+  <head>
+    <style>
+      body {
+        color: #000;
+        background-color: #fff;
+        color-scheme: light dark;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          color: #fff;
+          background-color: #000;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <p>Hello <b>${username}</b>,</p>
+    <p>We received a request to verify your email address (<b>${email}</b>).</p>
+    <p>Your One-Time Password (OTP) is:</p>
+    <h2 style='color:#007BFF;'>${otp}</h2>
+    <p>Please enter this code within the next <b>5 minutes</b> to complete your verification.</p>
+    <p>If you did not request this, please ignore this message or contact our support team immediately.</p>
+    <p>Thank you for trusting us with your security!</p>
+    <p>Best regards,<br>Simrgeta Awash, Author and CEO</p>
+  </body>
+</html>
+        
       `
     })
   });
