@@ -52,6 +52,11 @@ export default async function handler(req, res) {
 
   // 📥 Extract request fields
   const { email, enteredOtp, deviceId, signature, timestamp } = req.body || {};
+  console.log("Token email:", emailFromToken);
+  console.log("Request email:", email);
+  console.log("DeviceId:", deviceId);
+  console.log("Signature valid:", verifyHmac(deviceId, signature));
+  console.log("Signature received:", signature);
   if (!email || !enteredOtp || !deviceId || !signature || !timestamp) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
