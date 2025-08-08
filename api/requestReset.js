@@ -112,7 +112,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         sender: { name: 'Abebe Getachew OTP', email: 'awashsimrgeta123@gmail.com' },
         to: [{ email, name: username }],
-        subject: 'Your OTP Code',
+        subject: 'Password Reset',
         htmlContent: emailHtml,
       }),
     });
