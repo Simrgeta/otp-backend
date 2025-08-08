@@ -1,5 +1,12 @@
-import fetch from 'node-fetch';
-import { GoogleAuth } from 'google-auth-library';
+// api/confirmReset.js
+import admin from 'firebase-admin';
+import crypto from 'crypto';
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_CREDS)),
+  });
+}
 
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -25,47 +32,54 @@ setInterval(() => {
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    if (req.method !== 'POST')
+      return res.status(405).json({ error: 'Method Not Allowed' });
 
-    const authHeader = req.headers.authorization || '';
-    const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (!idToken) return res.status(401).json({ error: 'Missing token' });
+    const { email, otp, newPassword } = req.body;
+    if (!email || !otp || !newPassword || newPassword.length < 8)
+      return res.status(400).json({ error: 'Invalid parameters' });
 
-    // verify caller
-    const verifyResp = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${process.env.FIREBASE_WEB_API_KEY}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken }) }
-    );
-    const verifyData = await verifyResp.json();
-    if (!verifyData.users || !verifyData.users[0]) return res.status(401).json({ error: 'Invalid token' });
-    const uid = verifyData.users[0].localId;
-    if (isRateLimited(uid)) return res.status(429).json({ error: 'Too many requests' });
+    // Find user doc
+    const snapshot = await admin
+      .firestore()
+      .collection('User')
+      .where('Email', '==', email)
+      .limit(1)
+      .get();
 
-    const { oobCode, newPassword } = req.body;
-    if (!oobCode || !newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
-      return res.status(400).json({ error: 'Missing or invalid parameters' });
+    if (snapshot.empty)
+      return res.status(404).json({ error: 'User not found' });
+
+    const doc = snapshot.docs[0];
+    const data = doc.data();
+
+    // Check OTP expiry
+    if (!data.otpExpiresAt || data.otpExpiresAt.toMillis() < Date.now()) {
+      return res.status(400).json({ error: 'OTP expired' });
     }
 
-    // Call Identity Toolkit to confirm reset
-    const resp = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=${process.env.FIREBASE_WEB_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oobCode, newPassword }),
-      }
-    );
-
-    const json = await resp.json();
-    if (!resp.ok) {
-      console.error('confirmReset failed', resp.status, json);
-      return res.status(400).json({ error: json?.error?.message || 'Reset failed' });
+    // Hash incoming OTP and compare
+    const hashedInput = crypto.createHash('sha256').update(otp).digest('hex');
+    if (hashedInput !== data.otpHash) {
+      return res.status(400).json({ error: 'Invalid OTP' });
     }
 
-    // Optionally revoke sessions for the user (safety); json.localId contains uid after reset
-    // If you have admin creds, you can call admin.auth().revokeRefreshTokens(json.localId)
+    // Get Firebase Auth user and update password
+    const userRecord = await admin.auth().getUserByEmail(email);
+    await admin.auth().updateUser(userRecord.uid, { password: newPassword });
 
-    return res.status(200).json({ status: 'OK' });
+    // Revoke all sessions
+    await admin.auth().revokeRefreshTokens(userRecord.uid);
+
+    // Clear OTP fields
+    await doc.ref.update({
+      otpHash: admin.firestore.FieldValue.delete(),
+      otpCreatedAt: admin.firestore.FieldValue.delete(),
+      otpExpiresAt: admin.firestore.FieldValue.delete(),
+      newOTP: false,
+    });
+
+    return res.status(200).json({ status: 'Password reset successful' });
   } catch (err) {
     console.error('confirmReset error', err);
     return res.status(500).json({ error: 'Internal server error' });
