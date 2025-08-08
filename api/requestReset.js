@@ -1,10 +1,18 @@
-import { GoogleAuth } from 'google-auth-library';
-import fetch from 'node-fetch';
+// api/requestReset.js
+import admin from 'firebase-admin';
 import crypto from 'crypto';
+
+// Initialize Admin SDK once
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_CREDS)),
+  });
+}
 
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS_PER_WINDOW = 5;
+const OTP_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
 function isRateLimited(uid) {
   const now = Date.now();
@@ -26,112 +34,77 @@ setInterval(() => {
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    if (req.method !== 'POST')
+      return res.status(405).json({ error: 'Method Not Allowed' });
 
     const authHeader = req.headers.authorization || '';
-    const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    const idToken = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7)
+      : null;
     if (!idToken) return res.status(401).json({ error: 'Missing token' });
 
-    // Verify token
-    const verifyResp = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${process.env.FIREBASE_WEB_API_KEY}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken }) }
-    );
-    const verifyData = await verifyResp.json();
-    if (!verifyData.users || !verifyData.users[0]) return res.status(401).json({ error: 'Invalid token' });
-    const uid = verifyData.users[0].localId;
+    const decoded = await admin.auth().verifyIdToken(idToken).catch(() => null);
+    if (!decoded) return res.status(401).json({ error: 'Invalid token' });
+    const uid = decoded.uid;
 
-    if (isRateLimited(uid)) return res.status(429).json({ error: 'Too many requests. Try later.' });
+    if (isRateLimited(uid))
+      return res.status(429).json({ error: 'Too many requests' });
 
     const { email } = req.body;
-    if (!email || typeof email !== 'string' || !email.includes('@')) return res.status(400).json({ error: 'Invalid email' });
+    if (
+      !email ||
+      typeof email !== 'string' ||
+      !email.includes('@')
+    )
+      return res.status(400).json({ error: 'Invalid email' });
 
-    // generate OTP
+    // Look up user document
+    const snapshot = await admin
+      .firestore()
+      .collection('User')
+      .where('Email', '==', email)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty)
+      return res.status(404).json({ error: 'User not found' });
+
+    const docRef = snapshot.docs[0].ref;
+    const username = snapshot.docs[0].data().Username || '';
+
+    // Generate OTP & hash it
     const otp = crypto.randomInt(100000, 999999).toString();
+    const hashedOtp = crypto
+      .createHash('sha256')
+      .update(otp)
+      .digest('hex');
 
-    // GoogleAuth for Firestore REST
-    const auth = new GoogleAuth({
-      credentials: JSON.parse(process.env.FIREBASE_CREDS),
-      scopes: ['https://www.googleapis.com/auth/datastore'],
-    });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
-    if (!token.token) return res.status(500).json({ error: 'Failed to get Firestore access token' });
-
-    // Query User collection by Email
-    const queryURL = `https://firestore.googleapis.com/v1/projects/${process.env.YOUR_PROJECT_ID}/databases/(default)/documents:runQuery`;
-    const queryBody = {
-      structuredQuery: {
-        from: [{ collectionId: 'User' }],
-        where: {
-          fieldFilter: {
-            field: { fieldPath: 'Email' },
-            op: 'EQUAL',
-            value: { stringValue: email },
-          },
-        },
-        limit: 1,
-      },
-    };
-
-    const queryRes = await fetch(queryURL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(queryBody),
-    });
-    const queryJson = await queryRes.json();
-
-    if (!Array.isArray(queryJson) || !queryJson[0]?.document) {
-      return res.status(404).json({ error: 'User not found with that email' });
-    }
-
-    const doc = queryJson[0].document;
-    const docName = doc.name; // full resource name: projects/.../documents/User/{docId}
-    const username = doc.fields?.Username?.stringValue || '';
-
-    // Patch document: Code, newOTP, timestamp
-    const patchURL = `https://firestore.googleapis.com/v1/${docName}?updateMask.fieldPaths=Code&updateMask.fieldPaths=newOTP&updateMask.fieldPaths=timestamp`;
-    const patchBody = {
-      fields: {
-        Code: { stringValue: otp },
-        newOTP: { booleanValue: true },
-        timestamp: { timestampValue: new Date().toISOString() },
-      },
-    };
-
-    const patchRes = await fetch(patchURL, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(patchBody),
+    // Store hashed OTP with expiry
+    await docRef.update({
+      otpHash: hashedOtp,
+      otpCreatedAt: admin.firestore.Timestamp.now(),
+      otpExpiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + OTP_EXPIRY_MS),
+      newOTP: true,
     });
 
-    if (!patchRes.ok) {
-      const errText = await patchRes.text();
-      console.error('Patch failed:', patchRes.status, errText);
-      return res.status(500).json({ error: 'Failed to write OTP' });
-    }
-
-    // Build deep link for in-app handling (if desired)
-    const deepLinkBase = process.env.FRONTEND_DEEP_LINK_SCHEME || '';
-    const deepLink = deepLinkBase ? `${deepLinkBase}?oobCode=${encodeURIComponent(otp)}&mode=otp` : null;
-    // NOTE: We're sending OTP (numeric) via email and storing it in DB. 
-    // If you prefer oobCode flow, use admin.generatePasswordResetLink instead.
-
-    // Send Email via Brevo
+    // Send email via Brevo
     const emailHtml = `
       <html>
         <body style="font-family:sans-serif;color:#111">
           <p>Hello ${username ? `<b>${username}</b>` : ''},</p>
           <p>Your One-Time Password (OTP) is:</p>
           <h2 style="color:#007BFF">${otp}</h2>
-          <p>This code is valid for a short time. If you didn't request it, ignore this message.</p>
+          <p>This code is valid for ${OTP_EXPIRY_MS / 60000} minutes. If you didn't request it, ignore this message.</p>
         </body>
       </html>
     `;
 
     const mailResp = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
-      headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
         sender: { name: 'Abebe Getachew OTP', email: 'awashsimrgeta123@gmail.com' },
         to: [{ email, name: username }],
