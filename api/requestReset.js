@@ -90,13 +90,17 @@ export default async function handler(req, res) {
     // Send email via Brevo
     const emailHtml = `
       <html>
-        <body style="font-family:sans-serif;color:#111">
-          <p>Hello ${username ? `<b>${username}</b>` : ''},</p>
-          <p>Your One-Time Password (OTP) is:</p>
-          <h2 style="color:#007BFF">${otp}</h2>
-          <p>This code is valid for ${OTP_EXPIRY_MS / 60000} minutes. If you didn't request it, ignore this message.</p>
-        </body>
-      </html>
+            <body style="color:#000; background-color:#fff; font-family:sans-serif;">
+              <p>Hello <b>${username}</b>,</p>
+              <p>We received a request to verify your email address (<b>${email}</b>).</p>
+              <p>Your One-Time Password (OTP) is:</p>
+              <h2 style="color:#007BFF; font-size:22px; font-weight:bold;">${otp}</h2>
+              <p>Please enter this code within the next <b>5 minutes</b> to complete your verification.</p>
+              <p>If you did not request this, please ignore this message or contact our support team immediately.</p>
+              <p>Thank you for trusting us with your security!</p>
+              <p>Best regards,<br>Simrgeta Awash, Author and CEO</p>
+            </body>
+          </html>
     `;
 
     const mailResp = await fetch('https://api.brevo.com/v3/smtp/email', {
