@@ -1,6 +1,6 @@
-// api/requestReset.js
 import admin from 'firebase-admin';
 import crypto from 'crypto';
+import fetch from 'node-fetch'; // ensure node-fetch is installed or available
 
 // Initialize Admin SDK once
 if (!admin.apps.length) {
