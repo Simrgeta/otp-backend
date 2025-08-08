@@ -88,7 +88,7 @@ export default async function handler(req, res) {
 
     // Step 1: Query document by email
     const queryRes = await fetch(
-      `https://firestore.googleapis.com/v1/projects/${process.env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`,
+      `https://firestore.googleapis.com/v1/projects/${process.env.YOUR_PROJECT_ID}/databases/(default)/documents:runQuery`,
       {
         method: 'POST',
         headers: {
