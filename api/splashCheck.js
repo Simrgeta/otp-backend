@@ -60,7 +60,7 @@ export default async function handler(req, res) {
   const queryURL = `https://firestore.googleapis.com/v1/projects/${process.env.YOUR_PROJECT_ID}/databases/(default)/documents:runQuery`;
   const queryBody = {
     structuredQuery: {
-      from: [{ collectionId: 'Users' }],
+      from: [{ collectionId: 'User' }],
       where: {
         fieldFilter: {
           field: { fieldPath: 'Email' },
