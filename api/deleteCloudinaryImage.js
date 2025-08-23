@@ -72,6 +72,7 @@ export default async function handler(req, res) {
     );
 
     const cloudinaryData = await cloudinaryResp.json();
+    console.log('Cloudinary delete response:', cloudinaryData);
 
     if (cloudinaryData.result === 'ok') {
       return res.status(200).json({ allow: true, message: 'Image deleted successfully' });
