@@ -8,7 +8,7 @@ if (!admin.apps.length) {
 }
 
 // Shared secret (must match the one in SessionManager)
-const HMAC_SECRET = process.env.HMAC_SECRET || "a3f5c7e2d9a1b478e4f62d1349b8c51f";
+const HMAC_SECRET = process.env.HMAC_SECRET || "a3f5c7e2d9a1b478e4f62d1349b8c51f3a7c45b6d29e8f7c8b9a1d2e3f4b5678";
 
 export default async function handler(req, res) {
   if (req.method !== "POST")
@@ -33,8 +33,8 @@ export default async function handler(req, res) {
 
     // ✅ Find user in Firestore by email
     const userSnap = await admin.firestore()
-      .collection("Users")
-      .where("email", "==", email)
+      .collection("User")
+      .where("Email", "==", email)
       .limit(1)
       .get();
 
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
     const uid = userDoc.id;
 
     // ✅ Delete Firestore user doc
-    await admin.firestore().collection("Users").doc(uid).delete();
+    await admin.firestore().collection("User").doc(uid).delete();
 
     // ✅ Delete FirebaseAuth account (if exists)
     try {
